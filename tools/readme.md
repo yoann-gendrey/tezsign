@@ -40,7 +40,7 @@ TODO: move udev to main readme
 To expose dev interface you need to setup udev rules:
 
 ```
-# /etc/udev/rules.d/99-usb-network.rules
+# /etc/udev/rules.d/50-usb-gadget.rules
 SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="ae:d3:e6:cd:ff:f3", NAME="tezsign_dev"
 ```
 
