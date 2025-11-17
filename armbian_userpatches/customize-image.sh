@@ -10,6 +10,6 @@ grep -Fvf <(dpkg-query -W -f='${Package}\n' | sed 's/^/#/') /tmp/overlay/package
     xargs sudo apt purge --assume-yes --allow-remove-essential
 
 sudo apt autoremove --assume-yes
-sudo apt install initramfs-tools-bin --assume-yes # restore initramfs-tools-bin if it was removed
+sudo apt install initramfs-tools --assume-yes # restore initramfs-tools-bin if it was removed
 
 touch /root/.no_rootfs_resize
