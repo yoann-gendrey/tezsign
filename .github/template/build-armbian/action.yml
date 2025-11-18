@@ -130,7 +130,7 @@ runs:
             SHARE_LOG="yes" \
             NETWORKING_STACK=none \
             CONSOLE_AUTOLOGIN=false \
-            FIXED_IMAGE_SIZE=${{ inputs.tezsign_flavour == 'dev' && 2000 || 1500 }} \
+            FIXED_IMAGE_SIZE=${{ inputs.tezsign_flavour == 'dev' && 2000 || 1300 }} \
             ROOTFS_TYPE=ext4 \
             INCLUDE_HOME_DIR=false \
             EXTRA_ROOTFS_MIB_SIZE=128 \
