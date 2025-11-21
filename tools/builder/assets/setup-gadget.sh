@@ -43,6 +43,7 @@ mount -t functionfs tezsign /dev/ffs/tezsign
 chmod 770 /dev/ffs/tezsign
 chown :dev_manager /dev/ffs/tezsign
 chown registrar:registrar /dev/ffs/tezsign/ep0
+chown tezsign:tezsign -R /data/tezsign # restore data permissions
 
 # Tune performance
 echo schedutil | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
