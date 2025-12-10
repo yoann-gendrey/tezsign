@@ -11,6 +11,11 @@ if [[ -z "${UDC}" ]]; then
   exit 1
 fi
 
+if grep -q "^${UDC}$" "${GADGET_DIR}/UDC" 2>/dev/null; then
+  echo "UDC is already set to ${UDC}."
+  exit 0
+fi
+
 echo "${UDC}" > "${GADGET_DIR}/UDC"
 echo "Attached gadget to UDC: ${UDC}"
 

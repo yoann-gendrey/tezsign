@@ -4,12 +4,14 @@ After=setup-gadget-dev.service ffs_registrar.service
 Requires=ffs_registrar.service
 
 [Service]
-Type=oneshot
+Type=exec
 ExecStartPre=/usr/bin/udevadm settle --timeout=5
 ExecStart=/usr/local/bin/attach-gadget.sh
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=2
+RemainAfterExit=no
+Restart=always
+RestartSec=1
+StartLimitIntervalSec=0
+
 StandardOutput=journal+console
 StandardError=journal+console
 
