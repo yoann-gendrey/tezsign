@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tez-capital/tezsign/app/gadget/common"
@@ -396,7 +398,7 @@ func runBrokers(ctx context.Context, fs *keychain.FileStore, kr *keychain.KeyRin
 	}
 	defer out0Fd.Close()
 
-	// IF1 (sign) endpoints
+	// IF1 (mgmt) endpoints
 	in1Fd, err := os.OpenFile(in1, os.O_WRONLY, 0) // device -> host
 	if err != nil {
 		return fmt.Errorf("open IF1 IN: %w", err)
@@ -436,7 +438,6 @@ func runBrokers(ctx context.Context, fs *keychain.FileStore, kr *keychain.KeyRin
 }
 
 func run(l *slog.Logger) error {
-
 	// Keystore directory: DATA_STORE/keystore when DATA_STORE is set; else next to binary
 	var baseDir string
 	if ds := strings.TrimSpace(os.Getenv("DATA_STORE")); ds != "" {
@@ -456,28 +457,56 @@ func run(l *slog.Logger) error {
 
 	kr := keychain.NewKeyRing(l, fs)
 
-	// --- broker handler: parse → validate → sign/deny → respond ---
+	// Graceful shutdown on SIGTERM/SIGINT
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
+	// Revival loop: wait for enabled socket, run brokers, restart on disable
 	for {
+		// Check for shutdown signal before waiting for enabled socket
+		select {
+		case sig := <-sigCh:
+			l.Info("Received shutdown signal", slog.String("signal", sig.String()))
+			return nil
+		default:
+		}
+
 		enabled, err := net.Dial("unix", common.EnabledSock)
 		if err != nil {
-			l.Info("gadget not enabled (socket down), retrying", "err", err)
+			l.Debug("gadget not enabled (socket down), retrying", "err", err)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		l.Info("gadget enabled; starting brokers")
 
 		ctx, cancel := context.WithCancel(context.Background())
+
+		// Monitor for disable (socket close) or shutdown signal
 		go func() {
-			_, _ = io.Copy(io.Discard, enabled)
-			l.Warn("gadget disabled; stopping brokers")
+			select {
+			case <-func() chan struct{} {
+				ch := make(chan struct{})
+				go func() {
+					_, _ = io.Copy(io.Discard, enabled)
+					close(ch)
+				}()
+				return ch
+			}():
+				l.Warn("gadget disabled; stopping brokers")
+			case sig := <-sigCh:
+				l.Info("Received shutdown signal during operation", slog.String("signal", sig.String()))
+			}
 			cancel()
 			_ = enabled.Close()
 		}()
 
 		err = runBrokers(ctx, fs, kr, l)
 		if err != nil {
-			l.Error("broker error", "err", err)
+			if errors.Is(err, context.Canceled) {
+				l.Info("Brokers stopped")
+			} else {
+				l.Error("broker error", "err", err)
+			}
 			continue
 		}
 	}
