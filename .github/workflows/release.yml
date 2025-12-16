@@ -1,246 +1,29 @@
-name: "Build Armbian (Parallel)"
+name: "Build Armbian (Radxa Zero 3)"
 
 on:
-    push:
+  push:
+  pull_request:
 
 jobs:
-    build-armbian:
-        runs-on: ubuntu-24.04-arm
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - board: "radxa-zero3"
-                      artifact_id: "radxa_zero3"
-                      armbian_release: "trixie"
-                      armbian_boot_scenario: "binman-atf-mainline"
-                      tezsign_flavour: "prod"
+  build-armbian:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
 
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v5
+      - name: Build Armbian Image
+        uses: ./.github/template/build-armbian
+        with:
+          artifact_id: "radxa_zero3"
+          armbian_token: ${{ secrets.GITHUB_TOKEN }}
+          armbian_board: "radxa-zero3"
+          armbian_release: "trixie"
+          armbian_boot_scenario: "binman-atf-mainline"
+          tezsign_flavour: "prod"
 
-            - name: Build base Armbian Image
-              uses: ./.github/template/build-armbian
-              with:
-                  artifact_id: ${{ matrix.artifact_id }}
-                  armbian_token: ${{ secrets.GITHUB_TOKEN }}
-                  armbian_board: ${{ matrix.board }}
-                  armbian_release: ${{ matrix.armbian_release }}
-                  armbian_boot_scenario: ${{ matrix.armbian_boot_scenario || '' }}
-                  tezsign_flavour: ${{ matrix.tezsign_flavour }}
-
-    build-gadget:
-        runs-on: ubuntu-latest
-        needs:
-          - build-armbian
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - image_id: "radxa_zero3"
-                      source_artifact: "radxa_zero3"
-                      create_binary_artifact: "false"
-                      tezsign_flavour: "prod"
-        steps:
-            - uses: actions/checkout@v5
-              with:
-                  fetch-depth: 0
-
-            - name: Build ${{ matrix.image_id }} image
-              uses: ./.github/template/amend-image
-              with:
-                image_id: ${{ matrix.image_id }}
-                source_artifact: ${{ matrix.source_artifact }}
-                create_binary_artifact: ${{ matrix.create_binary_artifact }}
-                tezsign_flavour: ${{ matrix.tezsign_flavour }}
-
-    cleanup-artifacts:
-        runs-on: ubuntu-latest
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - artifact: "raspberry_pi"
-                    - artifact: "radxa_zero3"
-                    - artifact: "raspberry_pi_dev"
-                    - artifact: "radxa_zero3_dev"
-        needs:
-          - build-gadget
-        steps:
-          - uses: geekyeggo/delete-artifact@v5
-            with:
-                name: ${{ matrix.artifact }}
-
-    build-updater:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v5
-              with:
-                  fetch-depth: 0
-
-            - name: Set up Go
-              uses: actions/setup-go@v4
-              with:
-                go-version: '>=1.25.0'
-
-            - name: Build tezsign updater (Linux aarch64)
-              env:
-                GOOS: linux
-                GOARCH: arm64
-              run: |
-                  go build -ldflags='-s -w -extldflags "-static"' -trimpath -o ./build/tezsign_updater_linux_arm64 ./tools/updater
-            
-            - name: Build tezsign updater (Linux amd64)
-              env:
-                GOOS: linux
-                GOARCH: amd64
-              run: |
-                  go build -ldflags='-s -w -extldflags "-static"' -trimpath -o ./build/tezsign_updater_linux_amd64 ./tools/updater
-
-            - name: Build tezsign updater (macos arm64)
-              env:
-                GOOS: darwin
-                GOARCH: arm64
-              run: |
-                  go build -ldflags='-s -w -extldflags "-static"' -trimpath -o ./build/tezsign_updater_macos_arm64 ./tools/updater
-
-            - name: Upload tezsign_updater artifact
-              uses: actions/upload-artifact@v5
-              with:
-                name: tezsign_updater
-                path: ./build/*
-                retention-days: 1
-
-    build-host-linux-amd64:
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v5
-            with:
-                fetch-depth: 0
-                submodules: true
-
-          - uses: ./.github/template/build-host-linux
-            with:
-              toolchain: x86_64-linux-musl
-              artifact-id: tezsign-host-linux-amd64
-              goos: linux
-              goarch: amd64
-              libusb-host: x86_64-linux-musl
-
-    build-host-linux-arm64:
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v5
-            with:
-                fetch-depth: 0
-                submodules: true
-
-          - uses: ./.github/template/build-host-linux
-            with:
-              toolchain: aarch64-linux-musl
-              artifact-id: tezsign-host-linux-arm64
-              goos: linux
-              goarch: arm64
-              libusb-host: aarch64-linux-musl
-
-    build-host-macos-amd64:
-        runs-on: macos-15-intel
-        steps:
-          - uses: actions/checkout@v5
-            with:
-                fetch-depth: 0
-                submodules: true
-
-          - name: Install autoconf
-            run: brew install autoconf automake gperf
-
-          - uses: ./.github/template/build-host-macos
-            with:
-              goos: macos
-              goarch: amd64
-              artifact-id: tezsign-host-macos-amd64
-              libusb-host: x86_64-darwin-none
-
-    build-host-macos-arm64:
-        runs-on: macos-latest
-        steps:
-          - uses: actions/checkout@v5
-            with:
-                fetch-depth: 0
-                submodules: true
-          - name: Install autoconf
-            run: brew install autoconf automake gperf
-
-          - uses: ./.github/template/build-host-macos
-            with:
-              goos: macos
-              goarch: arm64
-              artifact-id: tezsign-host-macos-arm64
-              libusb-host: aarch64-darwin-none
-
-    # build-host-windows-amd64:
-    #     runs-on: windows-latest
-    #     steps:
-    #       - uses: actions/checkout@v5
-    #         with:
-    #             fetch-depth: 0
-    #             submodules: true
-
-    #       - uses: ./.github/template/build-host-windows
-    #         with:
-    #           toolchain: x86_64-windows-gnu
-    #           artifact-id: tezsign-host-windows-amd64
-    #           goos: windows
-    #           goarch: amd64
-    #           libusb-host: x64-mingw-static
-
-    # build-host-windows-arm64:
-    #     runs-on: windows-11-arm
-    #     steps:
-    #       - uses: actions/checkout@v5
-    #         with:
-    #             fetch-depth: 0
-    #             submodules: true
-
-    #       - uses: ./.github/template/build-host-windows
-    #         with:
-    #           toolchain: aarch64-windows-gnu
-    #           artifact-id: tezsign-host-windows-arm64
-    #           goos: windows
-    #           goarch: arm64
-    #           libusb-host: arm64-mingw-static
-
-    publish:
-        runs-on: ubuntu-latest
-        if: github.ref == 'refs/heads/main'
-        needs: 
-          - build-gadget
-          - cleanup-artifacts # make sure artifacts are cleaned up before publishing
-          - build-host-linux-amd64
-          - build-host-linux-arm64
-          - build-host-macos-amd64
-          - build-host-macos-arm64
-          # - build-host-windows-amd64
-          # - build-host-windows-arm64
-          - build-updater
-        steps:
-          - uses: actions/checkout@v5
-
-          - name: create release dir
-            run: mkdir ./release
-
-          - uses: actions/download-artifact@v5
-            with:
-              path: ./release
-              merge-multiple: true
-
-          - name: Set date
-            run: echo "DATE=$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
-            
-          - name: publish
-            uses: ncipollo/release-action@v1
-            with:
-              artifacts: ./release/*
-              tag: ${{ format('release-{0}', env.DATE) }}
-              commit: ${{ github.sha }}
+      - name: Upload Armbian Image Artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: radxa_zero3
+          path: ./build/output/*.img      # Adjust path if your build-armbian outputs elsewhere
+          retention-days: 7
