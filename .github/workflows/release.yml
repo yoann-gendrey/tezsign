@@ -38,22 +38,10 @@ jobs:
             fail-fast: false
             matrix:
                 include:
-                    - image_id: "raspberry_pi"
-                      source_artifact: "raspberry_pi"
-                      create_binary_artifact: "true"
-                      tezsign_flavour: "prod"
-                    - image_id: "raspberry_pi"
-                      source_artifact: "raspberry_pi_dev"
-                      create_binary_artifact: "false"
-                      tezsign_flavour: "dev"
                     - image_id: "radxa_zero3"
                       source_artifact: "radxa_zero3"
                       create_binary_artifact: "false"
                       tezsign_flavour: "prod"
-                    - image_id: "radxa_zero3"
-                      source_artifact: "radxa_zero3_dev"
-                      create_binary_artifact: "false"
-                      tezsign_flavour: "dev"
         steps:
             - uses: actions/checkout@v5
               with:
