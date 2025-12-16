@@ -79,11 +79,13 @@ func drainEP0Events(ep0 *os.File, enabled chan<- bool, ready *atomic.Uint32, l *
 			triggerSoftConnect(l)
 			continue
 		case evTypeSuspend:
-			enabled <- false
-			l.Info("tezsign gadget suspended")
+			// Don't stop brokers on suspend - USB is still connected, just in low-power mode.
+			// The brokers should continue running so they're ready when resume happens.
+			// I/O operations may timeout during suspend, but backoff will handle it.
+			l.Info("tezsign gadget suspended (brokers kept running)")
 			continue
 		case evTypeResume:
-			enabled <- true
+			// No need to re-enable since we didn't disable on suspend
 			l.Info("tezsign gadget resumed")
 			continue
 		case evTypeSetup:
