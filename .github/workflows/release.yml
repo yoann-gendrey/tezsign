@@ -10,19 +10,6 @@ jobs:
             fail-fast: false
             matrix:
                 include:
-                    - board: "rpi4b"
-                      artifact_id: "raspberry_pi_dev"
-                      armbian_release: "trixie"
-                      tezsign_flavour: "dev"
-                    - board: "rpi4b"
-                      artifact_id: "raspberry_pi"
-                      armbian_release: "trixie"
-                      tezsign_flavour: "prod"
-                    - board: "radxa-zero3"
-                      artifact_id: "radxa_zero3_dev"
-                      armbian_release: "trixie"
-                      armbian_boot_scenario: "binman-atf-mainline"
-                      tezsign_flavour: "dev"
                     - board: "radxa-zero3"
                       artifact_id: "radxa_zero3"
                       armbian_release: "trixie"
