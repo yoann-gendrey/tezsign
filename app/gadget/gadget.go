@@ -413,7 +413,7 @@ func handleRequestsFactory(fs *keychain.FileStore, kr *keychain.KeyRing, l *slog
 	}
 }
 
-func runBrokers(ctx context.Context, fs *keychain.FileStore, kr *keychain.KeyRing, l *slog.Logger, notifier *watchdog.Notifier) error {
+func runBrokers(ctx context.Context, fs *keychain.FileStore, kr *keychain.KeyRing, l *slog.Logger) error {
 	l.Info("Waiting for endpoints...")
 	in0, out0, in1, out1, err := waitForFunctionFSEndpoints(common.FfsInstanceRoot, waitEndpointsTime)
 	if err != nil {
@@ -480,11 +480,6 @@ func runBrokers(ctx context.Context, fs *keychain.FileStore, kr *keychain.KeyRin
 
 	l.Info("Signer gadget online; awaiting requests.")
 
-	// Signal to systemd that we're ready (Type=notify)
-	if err := notifier.Ready(); err != nil {
-		l.Warn("failed to signal ready to systemd", slog.Any("err", err))
-	}
-
 	// Wait for shutdown or broker failure
 	select {
 	case <-ctx.Done():
@@ -530,6 +525,13 @@ func run(l *slog.Logger, notifier *watchdog.Notifier) error {
 	stopPinger := notifier.StartPinger(rootCtx)
 	defer stopPinger()
 
+	// Signal READY early so systemd doesn't kill us while waiting for gadget to be enabled
+	// The service is ready to handle requests as soon as it enters the revival loop
+	if err := notifier.Ready(); err != nil {
+		l.Warn("failed to signal ready to systemd", slog.Any("err", err))
+	}
+	l.Info("tezsign service ready, waiting for gadget to be enabled")
+
 	// Revival loop: wait for enabled socket, run brokers, restart on disable
 	for {
 		// Check for shutdown signal before waiting for enabled socket
@@ -571,7 +573,7 @@ func run(l *slog.Logger, notifier *watchdog.Notifier) error {
 			_ = enabled.Close()
 		}()
 
-		err = runBrokers(ctx, fs, kr, l, notifier)
+		err = runBrokers(ctx, fs, kr, l)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				l.Info("Brokers stopped (context canceled)")
