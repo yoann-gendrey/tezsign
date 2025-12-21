@@ -305,7 +305,11 @@ func Connect(p ConnectParams) (*Session, error) {
 
 	sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].ifaceNum < ifaces[j].ifaceNum })
 
-	// Now it’s safe to select the discovered configuration and claim the chosen interface
+	// Enable auto-detach of kernel drivers to avoid conflicts
+	// This is silently ignored on platforms that don't support it
+	_ = chosen.SetAutoDetach(true)
+
+	// Now it's safe to select the discovered configuration and claim the chosen interface
 	cfg, err := chosen.Config(cfgNum)
 	if err != nil {
 		ctx.Close()

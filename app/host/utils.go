@@ -137,40 +137,14 @@ func withSession(channel common.Channel) func(ctx context.Context, cmd *cli.Comm
 			common.ChanMgmt: "mgmt",
 		}[channel]))
 
-		// Retry initial connection with exponential backoff
-		// This handles the case where gadget isn't ready at startup
-		params := common.ConnectParams{
+		sess, err := common.Connect(common.ConnectParams{
 			Serial:  devSerial,
 			Logger:  l,
 			Channel: channel,
+		})
+		if err != nil {
+			return ctx, err
 		}
-
-		var sess *common.Session
-		var err error
-		backoff := 500 * time.Millisecond
-		maxBackoff := 30 * time.Second
-
-		for {
-			sess, err = common.Connect(params)
-			if err == nil {
-				break
-			}
-
-			l.Info("waiting for gadget", slog.Any("err", err), slog.Duration("retry_in", backoff))
-
-			select {
-			case <-ctx.Done():
-				return ctx, ctx.Err()
-			case <-time.After(backoff):
-			}
-
-			// Exponential backoff with cap
-			backoff = backoff * 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-		}
-
 		l.Debug("connected", slog.String("serial", sess.Serial))
 		h.Session = sess
 
