@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// stopServerTimeout is the maximum time to wait for the liveness server to shut down.
+// This prevents blocking the enabled channel consumer if shutdown takes too long.
+const stopServerTimeout = 5 * time.Second
+
 func watchLiveness(sockPath string, ready *atomic.Uint32, l *slog.Logger) {
 	for {
 		conn, err := net.Dial("unix", sockPath)
@@ -76,13 +80,18 @@ func runEnabledWatcher(enabled <-chan bool, sockPath string, l *slog.Logger) {
 	var closeCompletedChan <-chan struct{}
 	isEnabled := false
 
-	// stopServer cancels the current server and waits for cleanup
+	// stopServer cancels the current server and waits for cleanup with timeout
 	stopServer := func() {
 		if activeCancel != nil {
 			activeCancel()
 			activeCancel = nil
 			if closeCompletedChan != nil {
-				<-closeCompletedChan
+				select {
+				case <-closeCompletedChan:
+					// Clean shutdown
+				case <-time.After(stopServerTimeout):
+					l.Warn("stopServer timeout waiting for liveness server shutdown")
+				}
 			}
 		}
 	}

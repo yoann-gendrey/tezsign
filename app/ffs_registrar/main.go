@@ -12,6 +12,18 @@ import (
 	"github.com/tez-capital/tezsign/app/gadget/common"
 )
 
+// trySendEnabled attempts to send a value to the enabled channel without blocking.
+// This prevents the EP0 event loop from blocking if events arrive faster than
+// they can be consumed, which would cause USB enumeration failures.
+func trySendEnabled(ch chan<- bool, val bool, l *slog.Logger) {
+	select {
+	case ch <- val:
+		// Successfully sent
+	default:
+		l.Warn("enabled channel full, dropping event (consumer may be slow)", "value", val)
+	}
+}
+
 func triggerSoftConnect(l *slog.Logger) error {
 	const udcClassPath = "/sys/class/udc"
 	const softConnectFile = "soft_connect"
@@ -71,20 +83,20 @@ func drainEP0Events(ep0 *os.File, enabled chan<- bool, ready *atomic.Uint32, l *
 			continue
 		case evTypeEnable:
 			l.Info("tezsign gadget enabled")
-			enabled <- true
+			trySendEnabled(enabled, true, l)
 			continue
 		case evTypeDisable:
 			l.Info("tezsign gadget disabled")
-			enabled <- false
+			trySendEnabled(enabled, false, l)
 			triggerSoftConnect(l)
 			continue
 		case evTypeSuspend:
-			enabled <- false
 			l.Info("tezsign gadget suspended")
+			trySendEnabled(enabled, false, l)
 			continue
 		case evTypeResume:
-			enabled <- true
 			l.Info("tezsign gadget resumed")
+			trySendEnabled(enabled, true, l)
 			continue
 		case evTypeSetup:
 			// Handle below
@@ -147,7 +159,9 @@ func main() {
 	// Start watching gadget liveness
 	var ready atomic.Uint32
 	go watchLiveness(common.ReadySock, &ready, l)
-	enabled := make(chan bool, 1)
+	// Buffer size 8 to handle rapid event sequences (enable/disable/suspend/resume)
+	// without blocking the EP0 event loop
+	enabled := make(chan bool, 8)
 	go runEnabledWatcher(enabled, common.EnabledSock, l)
 
 	l.Info("FFS registrar online; handling EP0 control & events")

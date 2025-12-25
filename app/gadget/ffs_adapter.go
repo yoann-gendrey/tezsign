@@ -3,11 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// ioTimeout is the maximum time to wait for a read/write syscall to complete.
+// This prevents indefinite blocking when the USB endpoint becomes unresponsive.
+const ioTimeout = 30 * time.Second
 
 type result struct {
 	n   int
@@ -62,6 +68,12 @@ func (r *Reader) ReadContext(ctx context.Context, p []byte) (int, error) {
 		// Wait for the goroutine to actually exit (prevents leak)
 		<-readChan
 		return 0, ctx.Err()
+	case <-time.After(ioTimeout):
+		// Timeout even without context cancel - prevents indefinite blocking
+		// when USB endpoint becomes unresponsive while still "enabled"
+		r.closeOnce()
+		<-readChan
+		return 0, fmt.Errorf("read timeout after %v", ioTimeout)
 	case res := <-readChan:
 		if errors.Is(res.err, os.ErrDeadlineExceeded) {
 			return 0, ctx.Err()
@@ -105,6 +117,12 @@ func (w *Writer) WriteContext(ctx context.Context, p []byte) (int, error) {
 		// Wait for the goroutine to actually exit (prevents leak)
 		<-writeChan
 		return 0, ctx.Err()
+	case <-time.After(ioTimeout):
+		// Timeout even without context cancel - prevents indefinite blocking
+		// when USB endpoint becomes unresponsive while still "enabled"
+		w.closeOnce()
+		<-writeChan
+		return 0, fmt.Errorf("write timeout after %v", ioTimeout)
 	case res := <-writeChan:
 		if errors.Is(res.err, os.ErrDeadlineExceeded) {
 			return 0, ctx.Err()
