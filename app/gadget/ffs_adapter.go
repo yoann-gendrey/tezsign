@@ -4,21 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
-	"sync/atomic"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
-
-// Instrumentation: track leaked goroutines from context cancellation
-var (
-	leakedReaders atomic.Int64
-	leakedWriters atomic.Int64
-)
-
-// GetLeakStats returns the current count of leaked reader and writer goroutines
-func GetLeakStats() (readers, writers int64) {
-	return leakedReaders.Load(), leakedWriters.Load()
-}
 
 type result struct {
 	n   int
@@ -26,22 +15,36 @@ type result struct {
 }
 
 type Reader struct {
-	fd int
+	fd     int
+	file   *os.File
+	mu     sync.Mutex
+	closed bool
 }
 
 type Writer struct {
-	fd int
+	fd     int
+	file   *os.File
+	mu     sync.Mutex
+	closed bool
 }
-
-// we know that this is potentially leaking goroutines
-// but as there are no available context-aware read/write for os.File
-// this is the simplest way to achieve it for now
 
 func NewReader(f *os.File) (*Reader, error) {
-	return &Reader{fd: int(f.Fd())}, nil
+	return &Reader{fd: int(f.Fd()), file: f}, nil
 }
+
 func NewWriter(f *os.File) (*Writer, error) {
-	return &Writer{fd: int(f.Fd())}, nil
+	return &Writer{fd: int(f.Fd()), file: f}, nil
+}
+
+// closeOnce closes the underlying file descriptor once.
+// This unblocks any goroutine stuck in unix.Read.
+func (r *Reader) closeOnce() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.closed {
+		r.closed = true
+		_ = r.file.Close()
+	}
 }
 
 func (r *Reader) ReadContext(ctx context.Context, p []byte) (int, error) {
@@ -54,13 +57,27 @@ func (r *Reader) ReadContext(ctx context.Context, p []byte) (int, error) {
 
 	select {
 	case <-ctx.Done():
-		leakedReaders.Add(1) // Instrumentation: goroutine is now leaked
+		// Close the file to unblock the goroutine stuck in unix.Read
+		r.closeOnce()
+		// Wait for the goroutine to actually exit (prevents leak)
+		<-readChan
 		return 0, ctx.Err()
 	case res := <-readChan:
 		if errors.Is(res.err, os.ErrDeadlineExceeded) {
 			return 0, ctx.Err()
 		}
 		return res.n, res.err
+	}
+}
+
+// closeOnce closes the underlying file descriptor once.
+// This unblocks any goroutine stuck in unix.Write.
+func (w *Writer) closeOnce() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.closed {
+		w.closed = true
+		_ = w.file.Close()
 	}
 }
 
@@ -83,7 +100,10 @@ func (w *Writer) WriteContext(ctx context.Context, p []byte) (int, error) {
 
 	select {
 	case <-ctx.Done():
-		leakedWriters.Add(1) // Instrumentation: goroutine is now leaked
+		// Close the file to unblock the goroutine stuck in unix.Write
+		w.closeOnce()
+		// Wait for the goroutine to actually exit (prevents leak)
+		<-writeChan
 		return 0, ctx.Err()
 	case res := <-writeChan:
 		if errors.Is(res.err, os.ErrDeadlineExceeded) {

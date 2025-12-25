@@ -458,18 +458,6 @@ func run(l *slog.Logger) error {
 
 	// --- broker handler: parse → validate → sign/deny → respond ---
 
-	// Instrumentation: periodically log leaked goroutine counts
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			readers, writers := GetLeakStats()
-			if readers > 0 || writers > 0 {
-				l.Warn("ffs_adapter leaked goroutines", slog.Int64("readers", readers), slog.Int64("writers", writers))
-			}
-		}
-	}()
-
 	for {
 		enabled, err := net.Dial("unix", common.EnabledSock)
 		if err != nil {
