@@ -2,131 +2,109 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"io"
 	"os"
-	"sync"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-// ioTimeout is the maximum time to wait for a read/write syscall to complete.
-// This prevents indefinite blocking when the USB endpoint becomes unresponsive.
-const ioTimeout = 30 * time.Second
-
-type result struct {
-	n   int
-	err error
-}
+const pollTimeoutMs = 100 // Check context every 100ms
 
 type Reader struct {
-	fd     int
-	file   *os.File
-	mu     sync.Mutex
-	closed bool
+	fd int
 }
 
 type Writer struct {
-	fd     int
-	file   *os.File
-	mu     sync.Mutex
-	closed bool
+	fd int
 }
 
 func NewReader(f *os.File) (*Reader, error) {
-	return &Reader{fd: int(f.Fd()), file: f}, nil
+	return &Reader{fd: int(f.Fd())}, nil
 }
 
 func NewWriter(f *os.File) (*Writer, error) {
-	return &Writer{fd: int(f.Fd()), file: f}, nil
+	return &Writer{fd: int(f.Fd())}, nil
 }
 
-// closeOnce closes the underlying file descriptor once.
-// This unblocks any goroutine stuck in unix.Read.
-func (r *Reader) closeOnce() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.closed {
-		r.closed = true
-		_ = r.file.Close()
-	}
-}
-
+// ReadContext reads from the file descriptor with context cancellation support.
+// Uses poll() with timeout to avoid spawning goroutines that could leak.
 func (r *Reader) ReadContext(ctx context.Context, p []byte) (int, error) {
-	readChan := make(chan result, 1)
-
-	go func() {
-		n, err := unix.Read(r.fd, p)
-		readChan <- result{n: n, err: err}
-	}()
-
-	select {
-	case <-ctx.Done():
-		// Close the file to unblock the goroutine stuck in unix.Read
-		r.closeOnce()
-		// Wait for the goroutine to actually exit (prevents leak)
-		<-readChan
-		return 0, ctx.Err()
-	case <-time.After(ioTimeout):
-		// Timeout even without context cancel - prevents indefinite blocking
-		// when USB endpoint becomes unresponsive while still "enabled"
-		r.closeOnce()
-		<-readChan
-		return 0, fmt.Errorf("read timeout after %v", ioTimeout)
-	case res := <-readChan:
-		if errors.Is(res.err, os.ErrDeadlineExceeded) {
+	for {
+		// Check context first
+		select {
+		case <-ctx.Done():
 			return 0, ctx.Err()
+		default:
 		}
-		return res.n, res.err
+
+		// Poll with timeout
+		fds := []unix.PollFd{{Fd: int32(r.fd), Events: unix.POLLIN}}
+		n, err := unix.Poll(fds, pollTimeoutMs)
+		if err != nil {
+			if err == unix.EINTR {
+				continue // Interrupted, retry
+			}
+			return 0, err
+		}
+		if n == 0 {
+			// Timeout, loop back to check context
+			continue
+		}
+
+		// Check for errors or hangup
+		if fds[0].Revents&(unix.POLLHUP|unix.POLLERR|unix.POLLNVAL) != 0 {
+			return 0, io.EOF
+		}
+
+		// Data available
+		if fds[0].Revents&unix.POLLIN != 0 {
+			return unix.Read(r.fd, p)
+		}
 	}
 }
 
-// closeOnce closes the underlying file descriptor once.
-// This unblocks any goroutine stuck in unix.Write.
-func (w *Writer) closeOnce() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if !w.closed {
-		w.closed = true
-		_ = w.file.Close()
-	}
-}
-
+// WriteContext writes to the file descriptor with context cancellation support.
+// Uses poll() with timeout to avoid spawning goroutines that could leak.
 func (w *Writer) WriteContext(ctx context.Context, p []byte) (int, error) {
-	writeChan := make(chan result, 1)
+	written := 0
+	total := len(p)
 
-	go func() {
-		written := 0
-		total := len(p)
-		for written < total {
+	for written < total {
+		// Check context first
+		select {
+		case <-ctx.Done():
+			return written, ctx.Err()
+		default:
+		}
+
+		// Poll with timeout
+		fds := []unix.PollFd{{Fd: int32(w.fd), Events: unix.POLLOUT}}
+		n, err := unix.Poll(fds, pollTimeoutMs)
+		if err != nil {
+			if err == unix.EINTR {
+				continue // Interrupted, retry
+			}
+			return written, err
+		}
+		if n == 0 {
+			// Timeout, loop back to check context
+			continue
+		}
+
+		// Check for errors or hangup
+		if fds[0].Revents&(unix.POLLHUP|unix.POLLERR|unix.POLLNVAL) != 0 {
+			return written, io.EOF
+		}
+
+		// Ready to write
+		if fds[0].Revents&unix.POLLOUT != 0 {
 			n, err := unix.Write(w.fd, p[written:])
 			if err != nil {
-				writeChan <- result{n: written, err: err}
-				return
+				return written, err
 			}
 			written += n
 		}
-		writeChan <- result{n: written, err: nil}
-	}()
-
-	select {
-	case <-ctx.Done():
-		// Close the file to unblock the goroutine stuck in unix.Write
-		w.closeOnce()
-		// Wait for the goroutine to actually exit (prevents leak)
-		<-writeChan
-		return 0, ctx.Err()
-	case <-time.After(ioTimeout):
-		// Timeout even without context cancel - prevents indefinite blocking
-		// when USB endpoint becomes unresponsive while still "enabled"
-		w.closeOnce()
-		<-writeChan
-		return 0, fmt.Errorf("write timeout after %v", ioTimeout)
-	case res := <-writeChan:
-		if errors.Is(res.err, os.ErrDeadlineExceeded) {
-			return 0, ctx.Err()
-		}
-		return res.n, res.err
 	}
+
+	return written, nil
 }
